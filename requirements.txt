@@ -1,0 +1,4 @@
+pymupdf
+tkinterdnd2
+pyinstaller
+pillow
