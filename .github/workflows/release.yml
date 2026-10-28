@@ -1,0 +1,75 @@
+# v로 시작하는 태그를 push하면 macOS/Windows/Linux 실행 파일을 빌드해 Releases 에 올린다.
+#   git tag v1.0.0 && git push origin v1.0.0
+# Actions 탭에서 수동 실행하면 Releases 없이 빌드 결과(Artifacts)만 받을 수 있다.
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: PDFCompress-macOS.zip
+          - os: windows-latest
+            asset: PDFCompress-Windows.zip
+          - os: ubuntu-latest
+            asset: PDFCompress-Linux.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build
+        run: python build.py
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        working-directory: dist
+        # ditto 는 .app 번들의 서명/권한을 보존한 채 압축
+        run: ditto -c -k --keepParent "PDF압축.app" "../${{ matrix.asset }}"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/*.exe" -DestinationPath "${{ matrix.asset }}"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p PDFCompress
+          cp dist/PDFCompress dist/PDFCompress.png dist/install.sh PDFCompress/
+          tar czf "${{ matrix.asset }}" PDFCompress
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: PDFCompress-*
+          generate_release_notes: true

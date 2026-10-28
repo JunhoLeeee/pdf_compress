@@ -67,20 +67,28 @@ if sys.platform == "win32":
     print(f"\n{final} 를 바탕화면에 두고(또는 바로가기 생성) PDF를 아이콘 위로 끌어다 놓으세요.")
 
 if sys.platform.startswith("linux"):
-    # 바탕화면에 놓으면 PDF를 끌어다 놓을 수 있는 실행 아이콘
-    exe = (ROOT / "dist" / NAME).resolve()
-    icon = (ROOT / "dist" / f"{NAME}.png").resolve()
-    shutil.copy(ROOT / "assets" / "icon_256.png", icon)
-    desktop = ROOT / "dist" / f"{DISPLAY_NAME}.desktop"
-    desktop.write_text(
+    # .desktop 의 Exec 는 절대 경로여야 하므로, 압축을 푼 위치에서 install.sh 가 바탕화면 아이콘을 만든다
+    shutil.copy(ROOT / "assets" / "icon_256.png", ROOT / "dist" / f"{NAME}.png")
+    install = ROOT / "dist" / "install.sh"
+    install.write_text(
+        "#!/bin/sh\n"
+        "# 바탕화면에 PDF를 끌어다 놓을 수 있는 아이콘을 만든다\n"
+        'DIR="$(cd "$(dirname "$0")" && pwd)"\n'
+        'DESKTOP="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"\n'
+        f'FILE="$DESKTOP/{DISPLAY_NAME}.desktop"\n'
+        "cat > \"$FILE\" <<EOF\n"
         "[Desktop Entry]\n"
         "Type=Application\n"
         f"Name={DISPLAY_NAME}\n"
-        f'Exec="{exe}" %F\n'
-        f"Icon={icon}\n"
+        f'Exec="$DIR/{NAME}" %F\n'
+        f"Icon=$DIR/{NAME}.png\n"
         "MimeType=application/pdf;inode/directory;\n"
-        "Terminal=false\n",
+        "Terminal=false\n"
+        "EOF\n"
+        'chmod +x "$FILE" "$DIR/' + NAME + '"\n'
+        'gio set "$FILE" metadata::trusted true 2>/dev/null\n'
+        'echo "$FILE 생성 완료 (안 되면 아이콘 우클릭 → \'실행 허용\')"\n',
         encoding="utf-8",
     )
-    desktop.chmod(0o755)
-    print(f"\n{desktop} 를 ~/Desktop 에 복사한 뒤 우클릭 → '실행 허용'을 켜세요.")
+    install.chmod(0o755)
+    print(f"\ndist/ 폴더에서 ./install.sh 를 실행하면 바탕화면에 아이콘이 생깁니다.")
