@@ -27,11 +27,13 @@ args = [
     "--exclude-module", "pymupdf4llm",
     "--exclude-module", "onnxruntime",
     "--exclude-module", "numpy",
+    # Pillow 는 빌드 때 아이콘 변환에만 쓰므로 앱에는 넣지 않음
+    "--exclude-module", "PIL",
 ]
+# 단일 exe(--onefile)는 실행할 때마다 임시 폴더에 풀어서 시작이 느리므로 폴더 형태로 빌드
+# (Windows 는 installer.iss 로 설치 프로그램을 만든다)
 if sys.platform == "darwin":
     args += ["--argv-emulation"]  # Finder에서 아이콘에 드롭한 파일을 sys.argv 로 전달
-else:
-    args += ["--onefile"]
 
 PyInstaller.__main__.run(args)
 
@@ -60,16 +62,13 @@ if sys.platform == "darwin":
     print(f"\n{final} 를 응용 프로그램 폴더나 Dock/바탕화면에 두고 PDF를 아이콘 위로 끌어다 놓으세요.")
 
 if sys.platform == "win32":
-    exe = ROOT / "dist" / f"{NAME}.exe"
-    final = exe.with_name(f"{DISPLAY_NAME}.exe")
-    final.unlink(missing_ok=True)
-    exe.rename(final)
-    print(f"\n{final} 를 바탕화면에 두고(또는 바로가기 생성) PDF를 아이콘 위로 끌어다 놓으세요.")
+    print("\n설치 프로그램은 Inno Setup 으로 만듭니다: iscc installer.iss")
 
 if sys.platform.startswith("linux"):
     # .desktop 의 Exec 는 절대 경로여야 하므로, 압축을 푼 위치에서 install.sh 가 바탕화면 아이콘을 만든다
-    shutil.copy(ROOT / "assets" / "icon_256.png", ROOT / "dist" / f"{NAME}.png")
-    install = ROOT / "dist" / "install.sh"
+    out = ROOT / "dist" / NAME
+    shutil.copy(ROOT / "assets" / "icon_256.png", out / f"{NAME}.png")
+    install = out / "install.sh"
     install.write_text(
         "#!/bin/sh\n"
         "# 바탕화면에 PDF를 끌어다 놓을 수 있는 아이콘을 만든다\n"
@@ -91,4 +90,4 @@ if sys.platform.startswith("linux"):
         encoding="utf-8",
     )
     install.chmod(0o755)
-    print(f"\ndist/ 폴더에서 ./install.sh 를 실행하면 바탕화면에 아이콘이 생깁니다.")
+    print(f"\n{out}/install.sh 를 실행하면 바탕화면에 아이콘이 생깁니다.")

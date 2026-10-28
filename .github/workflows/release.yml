@@ -8,8 +8,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# 기본은 읽기 전용, 릴리스 업로드 단계에만 쓰기 권한
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -20,7 +21,7 @@ jobs:
           - os: macos-latest
             asset: PDFCompress-macOS.zip
           - os: windows-latest
-            asset: PDFCompress-Windows.zip
+            asset: PDFCompress-Windows-Setup.exe
           - os: ubuntu-latest
             asset: PDFCompress-Linux.tar.gz
     runs-on: ${{ matrix.os }}
@@ -45,17 +46,23 @@ jobs:
         # ditto 는 .app 번들의 서명/권한을 보존한 채 압축
         run: ditto -c -k --keepParent "PDF압축.app" "../${{ matrix.asset }}"
 
-      - name: Package (Windows)
+      - name: Package (Windows installer)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path "dist/*.exe" -DestinationPath "${{ matrix.asset }}"
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6"
+            if (-not (Test-Path "$iscc\ISCC.exe")) { choco install innosetup -y --no-progress }
+            $env:PATH += ";$iscc"
+          }
+          $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "0.0.0" }
+          iscc /DAppVersion=$version installer.iss
+          Move-Item "dist/${{ matrix.asset }}" "${{ matrix.asset }}"
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
-        run: |
-          mkdir -p PDFCompress
-          cp dist/PDFCompress dist/PDFCompress.png dist/install.sh PDFCompress/
-          tar czf "${{ matrix.asset }}" PDFCompress
+        working-directory: dist
+        run: tar czf "../${{ matrix.asset }}" PDFCompress
 
       - uses: actions/upload-artifact@v4
         with:
@@ -66,12 +73,19 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
 
+      - name: Checksums
+        run: sha256sum PDFCompress-* > SHA256SUMS.txt
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: PDFCompress-*
+          files: |
+            PDFCompress-*
+            SHA256SUMS.txt
           generate_release_notes: true
