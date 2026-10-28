@@ -24,6 +24,8 @@ jobs:
           - os: ubuntu-latest
             asset: PDFCompress-Linux.tar.gz
     runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"  # Windows 콘솔(cp1252)에서 한글 출력 시 UnicodeEncodeError 방지
     steps:
       - uses: actions/checkout@v4
 
