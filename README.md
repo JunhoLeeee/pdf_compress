@@ -13,9 +13,19 @@ PDF 파일(또는 폴더)을 프로그램 아이콘 위로 끌어다 놓으면, 
 
 | OS | 파일 | 사용법 |
 |---|---|---|
-| macOS (Apple Silicon) | `PDFCompress-macOS.zip` | 압축 풀고 `PDF압축.app` 을 응용 프로그램 폴더/Dock에 두기. 처음 한 번은 우클릭 → 열기 |
+| macOS (Apple Silicon) | `PDFCompress-macOS.zip` | 압축 풀고 `PDF압축.app` 을 응용 프로그램 폴더로 옮긴 뒤 아래 "macOS 처음 실행" 참고 |
 | Windows | `PDFCompress-Windows.zip` | 압축 풀고 `PDF압축.exe` 를 바탕화면에 두기 |
 | Linux | `PDFCompress-Linux.tar.gz` | 압축 풀고 `./install.sh` 실행 → 바탕화면 아이콘 생성 (`python3-tk` 불필요, 실행 파일에 포함) |
+
+### macOS 처음 실행
+
+Apple 공증을 받지 않은 앱이라, 인터넷에서 받으면 macOS가 실행을 막습니다. 터미널에서 한 번만 실행하세요:
+
+```bash
+xattr -cr /Applications/PDF압축.app
+```
+
+또는 앱을 한 번 실행해 차단되게 한 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 누르세요.
 
 ## 릴리스 만들기
 
