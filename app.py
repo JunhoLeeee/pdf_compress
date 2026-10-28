@@ -3,10 +3,12 @@
 실행 파일 아이콘 위에 PDF를 끌어다 놓아도 동작한다 (명령행 인자로 전달됨).
 """
 import json
+import multiprocessing
 import os
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
@@ -14,6 +16,9 @@ from tkinter import filedialog, ttk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from compressor import DEFAULT_LEVEL, LEVELS, collect_pdfs, compress, human
+
+# 압축은 별도 프로세스에서 실행: PyMuPDF가 작업 중 GIL을 놓지 않아 같은 프로세스면 창(진행 막대)이 멈춘다
+MP = multiprocessing.get_context("spawn")
 
 
 def settings_path() -> Path:
@@ -85,6 +90,8 @@ class App:
 
         self.status = tk.StringVar(value="대기 중")
         ttk.Label(root, textvariable=self.status, padding=(12, 0)).pack(anchor="w")
+        self.bar = ttk.Progressbar(root, mode="indeterminate")
+        self.bar.pack(fill="x", padx=12, pady=(4, 0))
 
         frame = ttk.Frame(root, padding=(12, 4, 12, 12))
         frame.pack(fill="both", expand=True)
@@ -120,13 +127,15 @@ class App:
             self.jobs.put((p, self.level.get()))
         self.pending += len(pdfs)
         self.status.set(f"압축 중… 남은 파일 {self.pending}개")
+        self.bar.start(12)
 
     def _worker(self):
+        pool = MP.Pool(1)
         while True:
             path, level = self.jobs.get()
             self.events.put(("start", path))
             try:
-                self.events.put(("done", compress(path, level)))
+                self.events.put(("done", pool.apply(compress, (path, level))))
             except Exception as e:  # 손상된 PDF 등
                 self.events.put(("error", (path, e)))
 
@@ -149,6 +158,7 @@ class App:
                 self._write(f"- {data.src.name}: {data.message}")
             if self.pending == 0:
                 self.status.set("모든 작업 완료")
+                self.bar.stop()
         self.root.after(100, self._poll)
 
     def _write(self, text: str):
@@ -158,27 +168,89 @@ class App:
         self.log.configure(state="disabled")
 
 
+class DropletWindow:
+    """아이콘에 드롭했을 때 우측 상단에 뜨는 작은 창: 압축 중에는 진행 상황, 끝나면 결과를 보여주고 자동으로 닫힌다."""
+
+    BG, FG, SUB = "#222", "white", "#ddd"
+
+    def __init__(self, pdfs, level):
+        self.pdfs, self.level = pdfs, level
+        self.events: queue.Queue = queue.Queue()
+        self.started = time.monotonic()
+        self.current = ""
+
+        self.root = root = tk.Tk()
+        root.overrideredirect(True)
+        root.attributes("-topmost", True)
+        self.frame = tk.Frame(root, bg=self.BG, padx=16, pady=12)
+        self.frame.pack()
+        self.title = tk.Label(self.frame, bg=self.BG, fg=self.FG, font=("TkDefaultFont", 13, "bold"),
+                              text=f"PDF 압축 중… · 강도 {level.split()[0]}")
+        self.title.pack(anchor="w")
+        self.text = tk.Label(self.frame, bg=self.BG, fg=self.SUB, justify="left", anchor="w", width=46)
+        self.text.pack(anchor="w", pady=(4, 6))
+        self.bar = ttk.Progressbar(self.frame, mode="indeterminate", length=340)
+        self.bar.pack(anchor="w")
+        self.bar.start(12)
+        self._place()
+
+        threading.Thread(target=self._work, daemon=True).start()
+        root.after(100, self._poll)
+        root.mainloop()
+
+    def _place(self):
+        self.root.update_idletasks()
+        x = self.root.winfo_screenwidth() - self.root.winfo_reqwidth() - 24
+        self.root.geometry(f"+{x}+48")
+
+    def _work(self):
+        lines, saved = [], 0
+        pool = MP.Pool(1)
+        for i, p in enumerate(self.pdfs, 1):
+            self.events.put(("progress", f"{i}/{len(self.pdfs)} · {p.name}"))
+            try:
+                r = pool.apply(compress, (p, self.level))
+            except Exception as e:  # 손상된 PDF 등
+                lines.append(f"✗ {p.name}: 실패 - {e}")
+                continue
+            if r.out:
+                saved += r.before - r.after
+                lines.append(f"✓ {p.name}  {human(r.before)} → {human(r.after)} ({r.ratio:.0f}%↓)")
+            else:
+                lines.append(f"- {p.name}: {r.message}")
+        pool.close()
+        if saved:
+            lines.append(f"\n총 {human(saved)} 절약 · 원본과 같은 폴더에 저장됨")
+        self.events.put(("done", "\n".join(lines[-12:])))
+
+    def _poll(self):
+        while not self.events.empty():
+            kind, data = self.events.get()
+            if kind == "progress":
+                self.current = data
+            else:
+                return self._finish(data)
+        elapsed = int(time.monotonic() - self.started)
+        self.text.configure(text=f"{self.current}\n경과 {elapsed // 60}:{elapsed % 60:02d}")
+        self.root.after(200, self._poll)
+
+    def _finish(self, result: str):
+        self.bar.stop()
+        self.bar.pack_forget()
+        self.title.configure(text=f"PDF 압축 완료 · 강도 {self.level.split()[0]}")
+        self.text.configure(text=result, width=0)
+        self._place()
+        for w in (self.root, self.frame, self.title, self.text):
+            w.bind("<Button-1>", lambda e: self.root.destroy())
+        self.root.after(4000, self.root.destroy)
+
+
 def run_droplet(paths):
-    """아이콘에 끌어다 놓은 파일을 창 없이 바로 압축하고, 결과 알림을 잠깐 띄운 뒤 종료."""
+    """아이콘에 끌어다 놓은 파일을 바로 압축 (진행 창을 띄우고, 끝나면 결과를 보여준 뒤 종료)."""
     pdfs = collect_pdfs(paths)
-    level = load_level()
-    lines, saved = [], 0
-    for p in pdfs:
-        try:
-            r = compress(p, level)
-        except Exception as e:
-            lines.append(f"✗ {p.name}: 실패 - {e}")
-            continue
-        if r.out:
-            saved += r.before - r.after
-            lines.append(f"✓ {p.name}  {human(r.before)} → {human(r.after)} ({r.ratio:.0f}%↓)")
-        else:
-            lines.append(f"- {p.name}: {r.message}")
     if not pdfs:
-        lines.append("PDF 파일이 없습니다.")
-    elif saved:
-        lines.append(f"\n총 {human(saved)} 절약 · 원본과 같은 폴더에 저장됨")
-    toast(f"PDF 압축 완료 · 강도 {level.split()[0]}", "\n".join(lines[-12:]))
+        return toast("PDF 압축", "PDF 파일이 없습니다.")
+    DropletWindow(pdfs, load_level())
 
 
 def toast(title: str, text: str, seconds: int = 4):
@@ -213,4 +285,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()  # 빌드된 실행 파일에서 압축 프로세스가 다시 GUI를 띄우지 않도록
     main()
