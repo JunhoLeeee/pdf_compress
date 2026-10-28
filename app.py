@@ -2,6 +2,8 @@
 
 실행 파일 아이콘 위에 PDF를 끌어다 놓아도 동작한다 (명령행 인자로 전달됨).
 """
+import json
+import os
 import queue
 import sys
 import threading
@@ -12,6 +14,35 @@ from tkinter import filedialog, ttk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from compressor import DEFAULT_LEVEL, LEVELS, collect_pdfs, compress, human
+
+
+def settings_path() -> Path:
+    """OS별 사용자 설정 폴더의 settings.json"""
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home()))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "PDFCompress" / "settings.json"
+
+
+def load_level() -> str:
+    """창에서 마지막으로 고른 압축 강도 (처음엔 기본값 '보통')"""
+    try:
+        level = json.loads(settings_path().read_text(encoding="utf-8"))["level"]
+        return level if level in LEVELS else DEFAULT_LEVEL
+    except (OSError, ValueError, KeyError):
+        return DEFAULT_LEVEL
+
+
+def save_level(level: str):
+    try:
+        path = settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"level": level}, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
 
 
 class App:
@@ -32,9 +63,12 @@ class App:
         top = ttk.Frame(root, padding=(12, 10, 12, 0))
         top.pack(fill="x")
         ttk.Label(top, text="압축 강도:").pack(side="left")
-        self.level = tk.StringVar(value=DEFAULT_LEVEL)
+        self.level = tk.StringVar(value=load_level())
         for name in LEVELS:
-            ttk.Radiobutton(top, text=name, value=name, variable=self.level).pack(side="left", padx=4)
+            ttk.Radiobutton(
+                top, text=name, value=name, variable=self.level,
+                command=lambda: save_level(self.level.get()),
+            ).pack(side="left", padx=4)
 
         self.drop = tk.Label(
             root,
@@ -127,10 +161,11 @@ class App:
 def run_droplet(paths):
     """아이콘에 끌어다 놓은 파일을 창 없이 바로 압축하고, 결과 알림을 잠깐 띄운 뒤 종료."""
     pdfs = collect_pdfs(paths)
+    level = load_level()
     lines, saved = [], 0
     for p in pdfs:
         try:
-            r = compress(p, DEFAULT_LEVEL)
+            r = compress(p, level)
         except Exception as e:
             lines.append(f"✗ {p.name}: 실패 - {e}")
             continue
@@ -143,7 +178,7 @@ def run_droplet(paths):
         lines.append("PDF 파일이 없습니다.")
     elif saved:
         lines.append(f"\n총 {human(saved)} 절약 · 원본과 같은 폴더에 저장됨")
-    toast("PDF 압축 완료", "\n".join(lines[-12:]))
+    toast(f"PDF 압축 완료 · 강도 {level.split()[0]}", "\n".join(lines[-12:]))
 
 
 def toast(title: str, text: str, seconds: int = 4):
